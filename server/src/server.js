@@ -556,21 +556,30 @@ MongoClient.connect(url, function(err, db) {
     var fromUser = getUserIdFromToken(req.get('Authorization'));
     var comment = req.body;
     var author = req.body.author;
-    var feedItemId = req.params.feeditemid;
+    comment.likeCounter = [];
+    var feedItemId = new ObjectID(req.params.feeditemid);
     if (fromUser === author) {
-      var feedItem = readDocument('feedItems', feedItemId);
-      // Initialize likeCounter to empty.
-      comment.likeCounter = [];
-      // Push returns the new length of the array.
-      // The index of the new element is the length of the array minus 1.
-      // Example: [].push(1) returns 1, but the index of the new element is 0.
-      var index = feedItem.comments.push(comment) - 1;
-      writeDocument('feedItems', feedItem);
-      // 201: Created.
-      res.status(201);
-      res.set('Location', '/feeditem/' + feedItemId + "/comments/" + index);
-      // Return a resolved version of the feed item.
-      res.send(getFeedItemSync(feedItemId));
+      // Only update the feed item if the author matches the currently authenticated
+      // user.
+      db.collection('feedItems').updateOne({
+        _id: feedItemId
+      }, { $push: { comments: comment} }, function(err, result) {
+        if (err) {
+          return sendDatabaseError(res, err);
+        } else if (result.modifiedCount === 0) {
+          // Could not find the specified feed item. Perhaps it does not exist, or
+          // is not authored by the user.
+          // 400: Bad request.
+          return res.status(400).end();
+        }
+        // Update succeeded! Return the resolved feed item.
+        getFeedItem(feedItemId, function(err, feedItem) {
+          if (err) {
+            return sendDatabaseError(res, err);
+          }
+          res.send(feedItem);
+        });
+      });
     } else {
       // Unauthorized.
       res.status(401).end();
@@ -579,21 +588,32 @@ MongoClient.connect(url, function(err, db) {
 
   app.put('/feeditem/:feeditemid/comments/:commentindex/likelist/:userid', function(req, res) {
     var fromUser = getUserIdFromToken(req.get('Authorization'));
-    var userId = parseInt(req.params.userid, 10);
-    var feedItemId = parseInt(req.params.feeditemid, 10);
+    var feedItemId = new ObjectID(req.params.feeditemid);
+    var userId = req.params.userid;
     var commentIdx = parseInt(req.params.commentindex, 10);
-    // Only a user can mess with their own like.
     if (fromUser === userId) {
-      var feedItem = readDocument('feedItems', feedItemId);
-      var comment = feedItem.comments[commentIdx];
-      // Only change the likeCounter if the user isn't in it.
-      if (comment.likeCounter.indexOf(userId) === -1) {
-        comment.likeCounter.push(userId);
-      }
-      writeDocument('feedItems', feedItem);
-      comment.author = readDocument('users', comment.author);
-      // Send back the updated comment.
-      res.send(comment);
+      // Only update the feed item if the author matches the currently authenticated
+      // user.
+      db.collection('feedItems').updateOne({
+        _id: feedItemId
+      }, { $push: {['comments.'+ commentIdx +'.likeCounter']: new ObjectID(userId)}}, function(err, result) {
+        if (err) {
+          return sendDatabaseError(res, err);
+        } else if (result.modifiedCount === 0) {
+          // Could not find the specified feed item. Perhaps it does not exist, or
+          // is not authored by the user.
+          // 400: Bad request.
+          return res.status(400).end();
+        }
+        // Update succeeded! Return the resolved feed item.
+        getFeedItem(feedItemId, function(err, feedItem) {
+          if (err) {
+            return sendDatabaseError(res, err);
+          }
+          console.log(feedItem.comments[commentIdx]);
+          res.send(feedItem.comments[commentIdx]);
+        });
+      });
     } else {
       // Unauthorized.
       res.status(401).end();
@@ -602,20 +622,32 @@ MongoClient.connect(url, function(err, db) {
 
   app.delete('/feeditem/:feeditemid/comments/:commentindex/likelist/:userid', function(req, res) {
     var fromUser = getUserIdFromToken(req.get('Authorization'));
-    var userId = parseInt(req.params.userid, 10);
-    var feedItemId = parseInt(req.params.feeditemid, 10);
+    var feedItemId = new ObjectID(req.params.feeditemid);
+    var userId = req.params.userid;
     var commentIdx = parseInt(req.params.commentindex, 10);
-    // Only a user can mess with their own like.
     if (fromUser === userId) {
-      var feedItem = readDocument('feedItems', feedItemId);
-      var comment = feedItem.comments[commentIdx];
-      var userIndex = comment.likeCounter.indexOf(userId);
-      if (userIndex !== -1) {
-        comment.likeCounter.splice(userIndex, 1);
-        writeDocument('feedItems', feedItem);
-      }
-      comment.author = readDocument('users', comment.author);
-      res.send(comment);
+      // Only update the feed item if the author matches the currently authenticated
+      // user.
+      db.collection('feedItems').updateOne({
+        _id: feedItemId
+      }, { $pullAll: {['comments.'+ commentIdx +'.likeCounter']: [new ObjectID(userId)]}}, function(err, result) {
+        if (err) {
+          return sendDatabaseError(res, err);
+        } else if (result.modifiedCount === 0) {
+          // Could not find the specified feed item. Perhaps it does not exist, or
+          // is not authored by the user.
+          // 400: Bad request.
+          return res.status(400).end();
+        }
+        // Update succeeded! Return the resolved feed item.
+        getFeedItem(feedItemId, function(err, feedItem) {
+          if (err) {
+            return sendDatabaseError(res, err);
+          }
+          console.log(feedItem.comments[commentIdx]);
+          res.send(feedItem.comments[commentIdx]);
+        });
+      });
     } else {
       // Unauthorized.
       res.status(401).end();
